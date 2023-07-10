@@ -6,6 +6,368 @@ import sys
 import io
 import os
 from pathlib import Path
+from itertools import islice
+def load_yaml_file(filename):
+    """
+    Function to load a YAML file and convert it into a Python dictionary.
+
+    Args:
+        filename (str): Path to the YAML file to load.
+
+    Returns:
+        dict: Dictionary representing the data in the YAML file.
+    """
+    with open(filename, 'r') as file:
+        # yaml.safe_load is used to convert the YAML document in the file to a Python dictionary
+        return yaml.safe_load(file)
+
+
+def write_yaml_file(filename, data):
+    """
+    Function to write a Python dictionary into a YAML file.
+
+    Args:
+        filename (str): Path to the YAML file to write.
+        data (dict): Dictionary containing the data to write in the file.
+
+    Returns:
+        None
+    """
+    with open(filename, 'w') as file:
+        # yaml.dump is used to convert a Python dictionary into a YAML document and write it into a file
+        yaml.dump(data, file)
+
+
+def check_fields(entry, required_fields):
+    """
+    Function to check if all required fields are present in an entry.
+
+    Args:
+        entry (dict): Dictionary representing the entry to check.
+        required_fields (list): List of strings representing the required fields.
+
+    Returns:
+        bool: True if all required fields are present in the entry, False otherwise.
+    """
+    # The all function is used to check if all elements in the iterable (the generator expression here)
+    # are true. In this case, it checks if every required field is a key in the entry dictionary.
+    return all(field in entry for field in required_fields)
+
+
+def process_yaml(input_filename, output_filename_complete, output_filename_incomplete, output_filename_txt):
+    """
+    This function reads YAML file containing articles/books data, checks completeness of each entry, 
+    writes the checked data into a text file and segregates the data into two separate YAML files based on completeness.
+
+    Args:
+        input_filename (str): Name of the input YAML file.
+        output_filename_complete (str): Name of the output YAML file to store complete entries.
+        output_filename_incomplete (str): Name of the output YAML file to store incomplete entries.
+        output_filename_txt (str): Name of the output text file to store checked data.
+
+    Returns:
+        None.
+    """
+    # Load the data from the input YAML file.
+    data = load_yaml_file(input_filename)
+
+    # Initialize dictionaries to store complete and incomplete entries.
+    data_complete = {'entries': {}}
+    data_incomplete = {'entries': {}}
+
+    # Define the required fields for each type of entry (articles and books).
+    required_fields_article = ['author', 'title', 'journal', 'year', 'volume', 'number', 'pages']
+    required_fields_book = ['author', 'title', 'year', 'publisher']
+    types = {'article': required_fields_article, 'book': required_fields_book}
+
+    # Initialize a dictionary to store entries with missing fields.
+    data_missing = {}
+
+    # Open the output text file and start writing into it.
+    with open(output_filename_txt, 'w') as f:
+        # Loop through each type of entry.
+        for entry_type, required_fields in types.items():
+            # Write the type of the entries that will follow.
+            f.write(f'--{entry_type.capitalize()}s--\n')
+
+            # Prepare the fieldnames for the output text file.
+            fieldnames = ['Key'] + required_fields + ['All Fields']
+
+            # Define a string format for writing into the output text file.
+            format_string = "{: <35}" + "{: ^10}" * (len(fieldnames) - 1) + "\n"
+
+            # Write the fieldnames into the output text file.
+            f.write(format_string.format(*fieldnames))
+
+            # Loop through each entry in the original data.
+            for key, value in data['entries'].items():
+                # If the type of the entry matches the current one.
+                if value.get('type') == entry_type:
+                    # Check if all required fields are present in the entry.
+                    check = check_fields(value, required_fields)
+
+                    # Prepare a dictionary of fields indicating if each required field is present or not.
+                    fields = {field: 'YES' if field in value else 'NO' for field in required_fields}
+
+                    # Prepare an ordered dictionary to maintain the order of the fields in the output.
+                    fields_ordered = {'Key': key}
+                    fields_ordered.update(fields)
+                    fields_ordered['All Fields'] = 'True' if check else 'False'
+
+                    # Write the information of the entry into the output text file.
+                    f.write(format_string.format(*fields_ordered.values()))
+
+                    # Segregate the entry based on its completeness.
+                    if check:
+                        data_complete['entries'][key] = value
+                    else:
+                        data_incomplete['entries'][key] = value
+                        # Store the incomplete entry in the data_missing dictionary, including its type.
+                        data_missing[key] = {"type": entry_type, "missing_fields": [k for k, v in fields.items() if v == 'NO']}
+
+        # Write entries with missing fields into the output text file.
+        for entry_type in types:
+            f.write(f'\n--{entry_type.capitalize()}s with FALSE--\n')
+            for key, value in data_missing.items():
+                if value.get('type') == entry_type:
+                    missing_fields_str = ', '.join(value['missing_fields'])
+                    f.write(f'{key}: {missing_fields_str}  [  ]\n')
+
+    # Write the complete and incomplete entries into separate YAML files.
+    write_yaml_file(output_filename_complete, data_complete)
+    write_yaml_file(output_filename_incomplete, data_incomplete)
+
+
+def process_yaml_old(input_filename, output_filename_complete, output_filename_incomplete, output_filename_txt):
+    """
+    Process a YAML file of bibliographic entries, categorize each entry as 'complete' or 'incomplete'
+    based on its fields, and write the resulting data to new YAML and TXT files.
+
+    Args:
+        input_filename (str): Name of the input YAML file.
+        output_filename_complete (str): Name of the output YAML file for 'complete' entries.
+        output_filename_incomplete (str): Name of the output YAML file for 'incomplete' entries.
+        output_filename_txt (str): Name of the output TXT file for listing all entries.
+
+    Returns:
+        None
+    """
+
+    # Load the original YAML file into a Python dictionary
+    data = load_yaml_file(input_filename)
+
+    # Create two new dictionaries to hold the entries that are complete (have all required fields)
+    # and those that are incomplete (missing one or more required fields)
+    data_complete = {'entries': {}}
+    data_incomplete = {'entries': {}}
+
+    # Define the required fields for each type of entry
+    required_fields_article = ['author', 'title', 'journal', 'year', 'volume', 'number', 'pages']
+    required_fields_book = ['author', 'title', 'year', 'publisher']
+    
+    # Map each type of entry to its required fields
+    types = {'article': required_fields_article, 'book': required_fields_book}
+
+    # Open the output TXT file in write mode
+    with open(output_filename_txt, 'w') as f:
+        # Process each type of entry
+        for entry_type, required_fields in types.items():
+            # Write the type of entries to the TXT file
+            f.write(f'--{entry_type.capitalize()}s--\n')
+
+            # Prepare the column names for the TXT file
+            fieldnames = ['Key'] + required_fields + ['All Fields']
+
+            # Create a format string for writing the data to the TXT file
+            format_string = "{: <35}" + "{: ^10}" * (len(fieldnames) - 1) + "\n"
+
+            # Write the column names to the TXT file
+            f.write(format_string.format(*fieldnames))
+
+            # Process each entry in the input data
+            for key, value in data['entries'].items():
+                # Check if the entry's type matches the current entry type being processed
+                if value.get('type') == entry_type:
+                    # Check if all required fields are present in the entry
+                    check = check_fields(value, required_fields)
+
+                    # Create a dictionary indicating the presence or absence of each required field in the entry
+                    fields = {field: 'YES' if field in value else 'NO' for field in required_fields}
+
+                    # Create an ordered dictionary of fields for writing to the TXT file
+                    fields_ordered = {'Key': key}
+                    fields_ordered.update(fields)
+                    fields_ordered['All Fields'] = 'True' if check else 'False'
+
+                    # Write the ordered fields to the TXT file
+                    f.write(format_string.format(*fields_ordered.values()))
+
+                    # Add the entry to the 'complete' or 'incomplete' dictionary based on its completeness
+                    if check:
+                        data_complete['entries'][key] = value
+                    else:
+                        data_incomplete['entries'][key] = value
+
+    # Write the 'complete' and 'incomplete' dictionaries to separate YAML files
+    write_yaml_file(output_filename_complete, data_complete)
+    write_yaml_file(output_filename_incomplete, data_incomplete)
+    
+def process_bibtex_file(bibtex_filename, output_filename, style='Harvard'):
+    """
+    Parse a BibTeX file and sort the entries by the authors' last names.
+    Write the sorted entries to a text file in a specific format.
+
+    Args:
+        bibtex_filename (str): The name of the BibTeX file to process.
+        output_filename (str): The name of the text file to write the sorted entries to.
+        style (str, optional): The citation style for the output. Defaults to 'Harvard'.
+
+    Returns:
+        None
+    """
+
+    # Load the BibTeX file
+    bib_data = pybtex.database.parse_file(bibtex_filename)
+
+    # Sort the entries by last name of the first author
+    # For entries without authors, sort them by the empty string ''
+    sorted_entries = sorted(bib_data.entries.items(), key=lambda x: x[1].persons.get('author', [''])[0].last_names)
+
+    # Open the output text file
+    with open(output_filename, 'w') as f:
+        # Enumerate over the sorted entries
+        for i, (key, entry) in enumerate(sorted_entries):
+            # Concatenate the names of the authors with ' and '
+            authors = ' and '.join(str(p) for p in entry.persons.get('author', []))
+            # Get the title, journal, volume, number, pages, and year of the entry
+            # If a field is missing, use an empty string as a placeholder
+            title = entry.fields.get('title', '')
+            journal = entry.fields.get('journal', '')
+            volume = entry.fields.get('volume', '')
+            number = entry.fields.get('number', '')
+            pages = entry.fields.get('pages', '')
+            year = entry.fields.get('year', '')
+            
+            # Choose the output format based on the citation style
+            if style == 'Harvard':
+                f.write(f"[{i+1}] {authors} ({year}). {title}. {journal}, {volume}({number}):{pages}.\n\n")
+            elif style == 'Harvardlike':
+                f.write(f"[{i+1}] {authors} ({year}). {title}. {journal}, {volume}, {pages}.\n\n")    
+            elif style == 'Vancouver':
+                f.write(f"[{i+1}] {authors}. {journal}, {volume}({number}):{pages}, {year}. {title}.\n\n")
+            elif style =='Human':
+                f.write(f"[{i+1}] {authors}. {title}. {journal}, {volume}({number}):{pages}, {year}.\n\n")
+            else:
+                raise ValueError(f'Unsupported citation style: {style}')
+
+    return print("preprocessed bib file check the output at: ",output_filename)
+
+def process_bibtex_file_field_jump(bibtex_filename, output_filename, style='Harvardlike'):
+    """
+    Parse a BibTeX file and sort the entries by the authors' last names.
+    Write the sorted entries to a text file in a specific format.
+
+    Args:
+        bibtex_filename (str): The name of the BibTeX file to process.
+        output_filename (str): The name of the text file to write the sorted entries to.
+        style (str, optional): The citation style for the output. Defaults to 'Harvardlike'.
+
+    Returns:
+        None
+    """
+
+    # Load the BibTeX file
+    bib_data = pybtex.database.parse_file(bibtex_filename)
+
+    # Sort the entries by last name of the first author
+    # For entries without authors, sort them by the empty string ''
+    sorted_entries = sorted(bib_data.entries.items(), key=lambda x: x[1].persons.get('author', [''])[0].last_names)
+
+    # Open the output text file
+    with open(output_filename, 'w') as f:
+        # Enumerate over the sorted entries
+        for i, (key, entry) in enumerate(sorted_entries):
+            # Concatenate the names of the authors with ' and '
+            authors = ' and '.join(str(p) for p in entry.persons.get('author', []))
+            # Get the title, journal, volume, number, pages, and year of the entry
+            # If a field is missing, use an empty string as a placeholder
+            title = entry.fields.get('title', '')
+            journal = entry.fields.get('journal', '')
+            volume = entry.fields.get('volume', '')
+            number = entry.fields.get('number', '')
+            pages = entry.fields.get('pages', '')
+            year = entry.fields.get('year', '')
+            
+            # Choose the output format based on the citation style
+            if style == 'Harvard':
+                citation = f"[{i+1}] {authors} ({year}). {title}. {journal}, {volume}({number}):{pages}.\n\n"
+            elif style == 'Harvardlike':
+                fields = [authors, f"({year})", title, journal, volume, pages]
+                non_empty_fields = [field for field in fields if field]
+                citation = ' '.join(non_empty_fields)
+                citation = f" {citation}.\n\n"
+            elif style == 'Vancouver':
+                citation = f"[{i+1}] {authors}. {journal}, {volume}({number}):{pages}, {year}. {title}.\n\n"
+            elif style =='Human':
+                citation = f"[{i+1}] {authors}. {title}. {journal}, {volume}({number}):{pages}, {year}.\n\n"
+            else:
+                raise ValueError(f'Unsupported citation style: {style}')
+            
+            # Write the citation to the output file
+            f.write(citation)
+
+    return print("preprocessed bib file check the output at: ",output_filename)
+def process_bibtex_file_standar(bibtex_filename, output_filename):
+    """
+    Parse a BibTeX file and sort the entries by the authors' last names.
+    Write the sorted entries to a text file in a specific format.
+
+    Args:
+        bibtex_filename (str): The name of the BibTeX file to process.
+        output_filename (str): The name of the text file to write the sorted entries to.
+
+    Returns:
+        None
+    """
+
+    # Load the BibTeX file
+    bib_data = pybtex.database.parse_file(bibtex_filename)
+
+    # Sort the entries by last name of the first author
+    # For entries without authors, sort them by the empty string ''
+    sorted_entries = sorted(bib_data.entries.items(), key=lambda x: x[1].persons.get('author', [''])[0].last_names)
+
+    # Open the output text file
+    with open(output_filename, 'w') as f:
+        # Enumerate over the sorted entries
+        for i, (key, entry) in enumerate(sorted_entries):
+            # Concatenate the names of the authors with ' and '
+            authors = ' and '.join(str(p) for p in entry.persons.get('author', []))
+            # Get the title, journal, volume, number, pages, and year of the entry
+            # If a field is missing, use an empty string as a placeholder
+            title = entry.fields.get('title', '')
+            journal = entry.fields.get('journal', '')
+            volume = entry.fields.get('volume', '')
+            number = entry.fields.get('number', '')
+            pages = entry.fields.get('pages', '')
+            year = entry.fields.get('year', '')
+            # Write the entry to the output file in the desired format
+            f.write(f"[{i+1}] {authors}. {title}. {journal}, {volume}({number}):{pages}, {year}.\n")
+    return print("preprocessed bib file check the output at: ",output_filename)
+
+def n_dic_take(dictionary, n=5):
+    """
+    Return the first n items of the dictionary.
+
+    Args:
+        dictionary (dict): The dictionary to take items from.
+        n (int): The number of items to take. Default is 5.
+
+    Returns:
+        list: A list of the first n items of the dictionary.
+    """
+    return list(islice(dictionary.items(), n))
+
 
 def pull_entry(file_in):
     '''
@@ -37,15 +399,39 @@ def is_yaml_open(filename):
     except yaml.YAMLError:
         return False # If the file is not a valid YAML file
 
-
-def dict_invertion(data_dic,key_wanted='title'):
+def dict_invertion_w_no_key_warning(data_dic, key_wanted='title', normalization=True):
     """
     This function takes a dictionary as input and returns a new dictionary where the values of the original dictionary are keys and the keys are values.
     :param data_dic: The dictionary to be inverted.
     :param key_wanted: The key to be used as value in the new dictionary. Default is 'title'.
+    :param normalization: The field would be given as a single string without spaces. Default is 'True'.
     :return: A new dictionary where the values of the original dictionary are keys and the keys are values.
     """
-    result = {normalize(value[key_wanted]): key for key, value in data_dic.items()} # Inverting the dictionary
+    result = {}
+    for key, value in data_dic.items():
+        if key_wanted in value:
+            if normalization:
+                result[normalize(value[key_wanted])] = key # Inverting the dictionary
+            else:
+                result[value[key_wanted]] = key # Inverting the dictionary    
+        else:
+            print(f"Key '{key_wanted}' not found in dictionary for key '{key}'")
+
+    return result
+def dict_invertion(data_dic,key_wanted='title',normalization=True):
+    """
+    This function takes a dictionary as input and returns a new dictionary where the values of the original dictionary are keys and the keys are values.
+    :param data_dic: The dictionary to be inverted.
+    :param key_wanted: The key to be used as value in the new dictionary. Default is 'title'.
+    :param normalization: The field would be given as a single string without spaces. Default is 'True'.
+    :return: A new dictionary where the values of the original dictionary are keys and the keys are values.
+    """
+    if normalization:
+        
+        result = {normalize(value[key_wanted]): key for key, value in data_dic.items()} # Inverting the dictionary
+    else:
+        result = {value[key_wanted]: key for key, value in data_dic.items()} # Inverting the dictionary    
+
     return result
 
 
@@ -87,8 +473,11 @@ def author_name_equivalence(entry):# TODO: we need to find a better way to do th
     for author in entry['author']:
         #print(author)
         last_name = author['last']
-        list_equivalence[last_name] = [author['first'][0]]
-        list_equivalence[last_name] += [author['first'][0] + '.']
+        if 'first' in author:
+            list_equivalence[last_name] = [author['first'][0]]
+            list_equivalence[last_name] += [author['first'][0] + '.']
+        else:
+            print(f'There is not first name for {author}')
         if  'middle' in author:# This may no work for exoctic names
             list_equivalence[last_name] = [author['middle'][0]]
             list_equivalence[last_name] += [author['middle'][0] + '.']  
@@ -214,8 +603,9 @@ def compare_files(file1, file2, output_file):# for this we take file 1 to look f
             f.write('\n\n\n')            
             f.write(f'For {Number_no_found} references no match were found (see {file_yaml_name_out})')
             f.write('\n\n\n')
+            print(f'For {Number_no_found} references no match were found (see {file_yaml_name_out})')
             for k in no_matches.keys():
-                f.write(f'{k}\n') 
+                f.write(f'{k}\n')
                 
             with open(file_yaml_name_out, 'w') as file:
                 documents = yaml.dump(no_matches, file)
@@ -249,6 +639,7 @@ def preprocess_bibtex_without_key_id(input_filename, output_filename, IDstart='r
     '''
 
     index = counter_start
+    missing_authors=[]
 
     with open(input_filename, 'r', encoding='utf-8') as input_file:
         lines = input_file.readlines()
@@ -256,14 +647,25 @@ def preprocess_bibtex_without_key_id(input_filename, output_filename, IDstart='r
     with open(output_filename, 'w', encoding='utf-8') as output_file:
         for line in lines:
             stripped_line = line.strip()
-            if any(re.match(f"@{entry_type}\s*{{\s*,", stripped_line, re.IGNORECASE) for entry_type in entry_types):
+            if any(re.match(f"@{entry_type}\s*{{[a-zA-Z]+\s*,", stripped_line, re.IGNORECASE) for entry_type in entry_types):
+                IDKEY=line
+                print(IDKEY)
+            elif any(re.match(f"@{entry_type}\s*{{\s*,", stripped_line, re.IGNORECASE) for entry_type in entry_types):
                 matched_entry_type = re.match(r"@([a-z]*)\s*{", stripped_line, re.IGNORECASE).group(1)
-                output_file.write('@' + matched_entry_type + '{' + generate_bib_key(IDstart, index) + ',\n')
+                IDKEY=generate_bib_key(IDstart, index)
+                #print('2',IDKEY)
+                output_file.write('@' + matched_entry_type + '{' + IDKEY + ',\n')
                 index += 1
             else:
                 output_file.write(line)
+            if re.match(r".*author\s*=\s*\{\s*\}\s*,.*", line):
+                missing_authors.append(IDKEY) 
+                       
 
-    return print("preprocess_bibtex_without_key_id created: ",output_filename)
+    if len(missing_authors) > 0 :
+        print(f'for {input_filename} No Authors where found in:')
+        print(*missing_authors,sep='\n')
+    return print("preprocessed_bibtex_without_key_id created: ",output_filename)
 
 def remove_non_ascii(s):
     '''
@@ -326,8 +728,7 @@ def process_bib_file(file_name,file_name_output_yaml='file_name.yaml'):
     bib_data = parser.parse_file(file_name)
 
     for key in bib_data.entries.keys():
-        entry = bib_data.entries[key]
-
+        entry = bib_data.entries[key]    
         for person in entry.persons['author']:
             for i in range(len(person.first_names)):
                 person.first_names[i] = replace_special_chars(person.first_names[i])
@@ -526,7 +927,7 @@ def add_entry_dic_to_yaml_referece(yaml_file, entry_data_A, dir_entry_data='./')
 
     # Checks that the first file is a correct data base and the second file is yaml.
     if not open_dic_Entry or not 'entries' in open_yaml_Data: 
-        return print('please check that both files are yaml and that the first file is a correct database with entry:' )  
+        return print('please check that the entry is a dictionary files are yaml and that the first file is a correct database with entry:',yaml_file,entry_data_A )  
 
     # Checks that the second file is a correct dictionary.
     if not isinstance(open_dic_Entry, dict):
@@ -538,8 +939,8 @@ def add_entry_dic_to_yaml_referece(yaml_file, entry_data_A, dir_entry_data='./')
 
     # Inverts the dictionaries for comparison.
     data_inver_Data_pulled=pull_entry(open_yaml_Data)
-    data_inver_Data = dict_invertion(data_inver_Data_pulled,'title')       
-    data_inver_Entry = dict_invertion(open_dic_Entry,'title')
+    data_inver_Data = dict_invertion_w_no_key_warning(data_inver_Data_pulled,'title')       
+    data_inver_Entry = dict_invertion_w_no_key_warning(open_dic_Entry,'title')
 
     # Compares the two dictionaries to find any additional entries in the input dictionary.   
     elements_add = set(data_inver_Entry.keys()) - set(data_inver_Data.keys())
@@ -560,7 +961,7 @@ def add_entry_dic_to_yaml_referece(yaml_file, entry_data_A, dir_entry_data='./')
         keys = ",".join(list(open_dic_Entry.keys()))
         return f"{keys} already exists in {yaml_file}"
 
-def add_entry_dic_to_yaml_referece(yaml_file, entry_data_A, dir_entry_data='./'):
+def add_entry_dic_to_yaml_referece_2(yaml_file, entry_data_A, dir_entry_data='./'):
     '''
     Adds entries from a given dictionary to an existing YAML reference file.
 
@@ -594,8 +995,8 @@ def add_entry_dic_to_yaml_referece(yaml_file, entry_data_A, dir_entry_data='./')
     
     # Inverts the dictionaries for comparison.
     data_inver_Data_pulled=pull_entry(open_yaml_Data)
-    data_inver_Data = dict_invertion(data_inver_Data_pulled,'title')       
-    data_inver_Entry = dict_invertion(open_dic_Entry,'title')
+    data_inver_Data = dict_invertion_w_no_key_warning(data_inver_Data_pulled,'title')       
+    data_inver_Entry = dict_invertion_w_no_key_warning(open_dic_Entry,'title')
               
     # Compares the two dictionaries to find any additional entries in the input dictionary.   
     elements_add = set(data_inver_Entry.keys()) - set(data_inver_Data.keys())
@@ -640,12 +1041,12 @@ def add_entry_yaml_to_yaml_referece(yaml_file, entry_data_A, dir_entry_data='./'
     
     #check that the first yaml is a correct database
     if not open_yaml_Entry or not 'entries' in open_yaml_Data: #Check that the first file is a correct data base and the second file is yaml
-        return print('please check that both files are yaml and that the first file is a correct database with entry:' )  
+        return print('please check that both files are yaml and that the first file is a correct database with entry:',yaml_file, entry_data_A )  
     #Inverse the files
     data_inver_Data_pulled=pull_entry(open_yaml_Data)
     entry_data_Entry_pulled=pull_entry(open_yaml_Entry)
-    data_inver_Data = dict_invertion(data_inver_Data_pulled,'title')       
-    data_inver_Entry = dict_invertion(entry_data_Entry_pulled,'title')
+    data_inver_Data = dict_invertion_w_no_key_warning(data_inver_Data_pulled,'title')       
+    data_inver_Entry = dict_invertion_w_no_key_warning(entry_data_Entry_pulled,'title')
               
     #compare the 2 objects        
     elements_add = set(data_inver_Entry.keys()) - set(data_inver_Data.keys())
@@ -678,8 +1079,8 @@ def add_entry_yaml_to_yaml_referece_old(yaml_file, entry_data_A, dir_entry_data=
     #Inverse the files
     data_inver_Data_pulled=pull_entry(open_yaml_Data)
     entry_data_Entry_pulled=pull_entry(open_yaml_Entry)
-    data_inver_Data = dict_invertion(data_inver_Data_pulled,'title')       
-    data_inver_Entry = dict_invertion(entry_data_Entry_pulled,'title')
+    data_inver_Data = dict_invertion_w_no_key_warning(data_inver_Data_pulled,'title')       
+    data_inver_Entry = dict_invertion_w_no_key_warning(entry_data_Entry_pulled,'title')
               
     #compare the 2 objects        
     elements_add = set(data_inver_Entry.keys()) - set(data_inver_Data.keys())
